@@ -151,6 +151,17 @@ address for long-term use.
 
 Whichever approach you use, do not let the address drift for a DNS service.
 
+Example router workflow:
+
+- start the stack and let the container appear on the LAN
+- identify the container MAC and current lease in the router
+- create a DHCP reservation for that MAC
+- update `AGH_IPV4` in `.env` if you want Compose and the router to agree on a
+  single fixed address
+
+In UniFi, this is typically done from the client device view by setting a fixed
+IP for the observed MAC address.
+
 ## Security Notes
 
 - Set AdGuard Home admin credentials during first-run setup
