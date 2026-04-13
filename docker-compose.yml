@@ -1,0 +1,91 @@
+services:
+  adguardhome:
+    image: ${AGH_IMAGE}
+    container_name: ${AGH_CONTAINER_NAME}
+    restart: unless-stopped
+
+    # No host port mappings are used.  AdGuard Home binds to port 53 and 80
+    # only on its macvlan LAN address, so the host Pi-hole remains owner of
+    # host port 53 and host port 80.
+    volumes:
+      - ./work:/opt/adguardhome/work
+      - ./conf:/opt/adguardhome/conf
+
+    networks:
+      adguard_lan:
+        # Keep the existing macvlan LAN address and default route behavior.
+        ipv4_address: ${AGH_IPV4}
+        gw_priority: 100
+      adguard_internal:
+        # Private-by-convention Docker bridge used only for AGH -> Unbound.
+        # Do not set Docker's internal:true here: recursive Unbound needs
+        # outbound Internet access to query root and authoritative servers.
+        ipv4_address: ${INTERNAL_AGH_IPV4}
+
+  tailscale:
+    image: ${TAILSCALE_IMAGE}
+    container_name: ${TAILSCALE_CONTAINER_NAME}
+    restart: unless-stopped
+
+    # Share AdGuard Home's network namespace.  This preserves the existing
+    # macvlan LAN IP and lets this Tailscale node expose AGH DNS on port 53 and
+    # proxy the AGH web UI from 127.0.0.1:80 without publishing host ports.
+    network_mode: service:adguardhome
+    depends_on:
+      - adguardhome
+
+    # Tailscale needs a TUN device for kernel networking.  State is persisted so
+    # the non-ephemeral auth key is only needed for the first successful login.
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./tailscale-state:/var/lib/tailscale
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_AUTH_ONCE: "true"
+      TS_ACCEPT_DNS: "false"
+      TS_HOSTNAME: ${TS_HOSTNAME}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+
+  unbound:
+    image: ${UNBOUND_IMAGE}
+    container_name: ${UNBOUND_CONTAINER_NAME}
+    restart: unless-stopped
+
+    # This resolver is intentionally private: it joins only adguard_internal,
+    # publishes no host ports, and is not reachable from the LAN.  AGH reaches
+    # it at a static bridge IP so AGH does not depend on Docker DNS for its
+    # upstream resolver.
+    networks:
+      adguard_internal:
+        ipv4_address: ${INTERNAL_UNBOUND_IPV4}
+
+    volumes:
+      - ./unbound/custom.conf.d:/etc/unbound/custom.conf.d:ro
+      - ./unbound/var:/var/unbound
+
+networks:
+  adguard_internal:
+    name: adguard_internal
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${INTERNAL_SUBNET}
+
+  adguard_lan:
+    name: adguard_lan
+    driver: macvlan
+    driver_opts:
+      # The parent interface is the Pi's physical LAN interface.
+      parent: ${LAN_PARENT_IFACE}
+    ipam:
+      config:
+        - subnet: ${LAN_SUBNET}
+          gateway: ${LAN_GATEWAY}
+
+          # This stack assigns AGH_IPV4 directly to the container above.
+          # It does not reserve the address in UniFi DHCP; reserve it there
+          # if this test becomes permanent.

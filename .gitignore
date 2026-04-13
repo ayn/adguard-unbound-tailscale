@@ -1,0 +1,18 @@
+.env
+.codex
+
+# Runtime state and live service data
+tailscale-state/
+work/
+conf/
+unbound/var/
+
+# Local backups and logs
+*.db
+*.log
+*.bak
+*.bak-*
+*.bak.*
+
+# Editor and OS noise
+.DS_Store
