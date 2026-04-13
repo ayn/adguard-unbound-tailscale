@@ -301,6 +301,114 @@ Stop:
 docker compose down
 ```
 
+## Syncing Policy Between AdGuard Home Instances
+
+The repository includes two helper scripts for copying configuration from one
+AdGuard Home instance to one or more others using the AdGuard Home HTTP API:
+
+- `./scripts/sync-client.sh`
+  - syncs a single client policy by exact client name or exact entry in
+    `ids[]`
+- `./scripts/sync-policy.sh`
+  - syncs global custom filtering rules and global SafeSearch settings
+
+Both scripts use `curl -n`, which means credentials are read from `~/.netrc`.
+They do not accept inline passwords and they do not require `PASS=...`
+environment variables.
+
+Example `~/.netrc` shape:
+
+```text
+machine agh-source.example
+  login admin
+  password <redacted>
+machine agh-dest.example
+  login admin
+  password <redacted>
+```
+
+Adjust the machine names to match the AdGuard Home hostnames you call with
+`--src` and `--dst`.
+
+### Sync One Client
+
+Sync one client from a source node to one destination:
+
+```sh
+./scripts/sync-client.sh \
+  --src https://agh-source.example \
+  --dst https://agh-dest.example \
+  --client "Example Phone"
+```
+
+You can also match by an exact client ID from `ids[]`:
+
+```sh
+./scripts/sync-client.sh \
+  --src https://agh-source.example \
+  --dst https://agh-dest.example \
+  --client example-phone
+```
+
+Sync the same client to multiple destinations:
+
+```sh
+./scripts/sync-client.sh \
+  --src https://agh-source.example \
+  --dst https://agh-b.example \
+  --dst https://agh-c.example \
+  --client example-phone
+```
+
+The client sync copies policy-related fields such as `ids`, `tags`,
+`use_global_settings`, filtering state, safe browsing state, parental control,
+SafeSearch, and blocked services.  On update, it preserves unrelated
+destination-specific client settings instead of overwriting the whole client
+object.
+
+### Sync Global Policy
+
+Sync global custom filtering rules and SafeSearch settings:
+
+```sh
+./scripts/sync-policy.sh \
+  --src https://agh-source.example \
+  --dst https://agh-dest.example
+```
+
+Sync the same global policy to multiple destinations:
+
+```sh
+./scripts/sync-policy.sh \
+  --src https://agh-source.example \
+  --dst https://agh-b.example \
+  --dst https://agh-c.example
+```
+
+### Defaults and Overrides
+
+The scripts ship with sanitized placeholder defaults:
+
+- source: `https://agh-source.example`
+- destination: `https://agh-dest.example`
+
+Override them with flags or environment variables:
+
+```sh
+SRC=https://agh-source.example \
+DSTS="https://agh-b.example https://agh-c.example" \
+./scripts/sync-policy.sh
+```
+
+```sh
+SRC=https://agh-source.example \
+DST=https://agh-dest.example \
+./scripts/sync-client.sh --client example-phone
+```
+
+Both scripts continue across multiple destinations and exit nonzero if any
+destination sync fails.
+
 ## Never Commit
 
 - `.env`
