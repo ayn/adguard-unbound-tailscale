@@ -13,7 +13,20 @@ http://<AGH_IPV4>/
 If Tailscale Serve is already configured, you can also use the node's MagicDNS
 name over HTTPS.
 
-## 2. Complete the AdGuard Home first-run flow
+## 2. Decide whether to use the optional seed template
+
+If you want AdGuard Home to start with Unbound already configured as the
+upstream, copy the template before starting the stack:
+
+```sh
+mkdir -p conf work tailscale-state unbound/var
+cp conf-template/AdGuardHome.yaml conf/AdGuardHome.yaml
+```
+
+If you skip this step, AdGuard Home will generate its own initial config and
+you can set the upstream manually later.
+
+## 3. Complete the AdGuard Home first-run flow
 
 During the initial setup:
 
@@ -25,7 +38,11 @@ During the initial setup:
 This repository intentionally does not commit the live `conf/` directory or any
 AdGuard Home configuration that contains credentials or runtime state.
 
-## 3. Set the upstream resolver
+If you use the template, the upstream is already preconfigured but web UI
+authentication starts disabled.  Set admin credentials immediately after first
+login.
+
+## 4. Set the upstream resolver
 
 This stack is designed so AdGuard Home forwards to the private Unbound
 container on the internal Docker bridge.
@@ -38,7 +55,7 @@ Use:
 
 Do not point AdGuard Home at the host's resolver or a host macvlan shim.
 
-## 4. Configure Tailscale Serve
+## 5. Configure Tailscale Serve
 
 Once the Tailscale sidecar is logged in, expose the AdGuard Home UI over HTTPS:
 
@@ -53,7 +70,7 @@ docker exec adguardhome-tailscale tailscale serve status
 docker exec adguardhome-tailscale tailscale status
 ```
 
-## 5. Optionally use this node as a Tailscale DNS server
+## 6. Optionally use this node as a Tailscale DNS server
 
 If you want tailnet clients to use this AdGuard Home instance for DNS:
 
@@ -69,13 +86,13 @@ If you use multiple DNS servers in Tailscale, clients may use different
 resolvers for different queries.  Align filtering and policy if you need
 consistent results.
 
-## 6. Reserve the LAN IP if the deployment becomes permanent
+## 7. Reserve the LAN IP if the deployment becomes permanent
 
 This stack is easiest to operate when the AdGuard Home LAN address is stable.
 If your router supports reservations based on the container MAC address, pin it
 there once the deployment is established.
 
-## 7. Keep local state out of Git
+## 8. Keep local state out of Git
 
 Do not commit:
 

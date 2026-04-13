@@ -49,6 +49,7 @@ LAN Client ->| AdGuard Home         |-> private Docker bridge -> Unbound
 docker-compose.yml
 .env.example
 README.md
+conf-template/
 scripts/
 unbound/custom.conf.d/
 ```
@@ -71,29 +72,40 @@ Live runtime directories such as `conf/`, `work/`, `tailscale-state/`, and
    - set `TS_HOSTNAME`
    - set `TS_AUTHKEY` for the first login
 
-3. Start the stack:
+3. Optionally seed AGH with the provided template so Unbound is preconfigured:
+
+   ```sh
+   mkdir -p conf work tailscale-state unbound/var
+   cp conf-template/AdGuardHome.yaml conf/AdGuardHome.yaml
+   ```
+
+   If you skip this step, AdGuard Home will create its own initial config and
+   you can set the upstream later through the UI.
+
+4. Start the stack:
 
    ```sh
    docker compose up -d
    ```
 
-4. Open the AdGuard Home UI on the LAN IP you assigned:
+5. Open the AdGuard Home UI on the LAN IP you assigned:
 
    ```text
    http://<AGH_IPV4>/
    ```
 
-5. Complete the AdGuard Home first-run setup and set admin credentials.
+6. Complete the AdGuard Home first-run setup, or if you used the template,
+   immediately set admin credentials in the AGH UI before broader use.
 
-6. Configure Tailscale Serve from inside the sidecar:
+7. Configure Tailscale Serve from inside the sidecar:
 
    ```sh
    docker exec adguardhome-tailscale tailscale serve --bg --https=443 http://127.0.0.1:80
    ```
 
-7. Open the UI through the Tailscale MagicDNS name shown by `tailscale status`.
+8. Open the UI through the Tailscale MagicDNS name shown by `tailscale status`.
 
-8. If you want tailnet clients to use this instance for DNS, add the node's
+9. If you want tailnet clients to use this instance for DNS, add the node's
    Tailscale IP addresses under Tailscale DNS settings as global nameservers.
 
 ## Compose Design
@@ -165,6 +177,8 @@ IP for the observed MAC address.
 ## Security Notes
 
 - Set AdGuard Home admin credentials during first-run setup
+- If you use `conf-template/AdGuardHome.yaml`, the initial web UI starts with no
+  users configured.  Set authentication immediately after first login.
 - Keep the UI behind Tailscale when possible
 - Keep `.env`, service state, and local config out of Git
 - Remove `TS_AUTHKEY` from `.env` after the first successful Tailscale login if
