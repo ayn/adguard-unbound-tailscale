@@ -32,7 +32,11 @@ services:
     # proxy the AGH web UI from 127.0.0.1:80 without publishing host ports.
     network_mode: service:adguardhome
     depends_on:
-      - adguardhome
+      adguardhome:
+        # When adguardhome is explicitly restarted via docker compose, restart
+        # this sidecar too so it rejoins the current shared network namespace.
+        condition: service_started
+        restart: true
 
     # Tailscale needs a TUN device for kernel networking.  State is persisted so
     # the non-ephemeral auth key is only needed for the first successful login.

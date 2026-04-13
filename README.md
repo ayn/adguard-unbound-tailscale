@@ -262,6 +262,18 @@ IP for the observed MAC address.
 - Confirm `TS_AUTHKEY` is valid for the first login
 - Run `./scripts/init-unbound.sh` before first boot so Unbound has `root.hints`
   and `root.key`
+- If you explicitly restart `adguardhome`, restart the sidecar too so it
+  rejoins the current shared network namespace:
+
+  ```sh
+  docker compose restart adguardhome tailscale
+  ```
+
+  If `adguardhome` was already restarted by itself, recover with:
+
+  ```sh
+  docker restart adguardhome-tailscale
+  ```
 - Check:
 
   ```sh
