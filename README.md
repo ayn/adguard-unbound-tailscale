@@ -46,6 +46,7 @@ LAN Client ->| AdGuard Home         |-> private Docker bridge -> Unbound
 ## Repository Layout
 
 ```text
+AGENTS.md
 docker-compose.yml
 .env.example
 README.md
@@ -72,7 +73,17 @@ Live runtime directories such as `conf/`, `work/`, `tailscale-state/`, and
    - set `TS_HOSTNAME`
    - set `TS_AUTHKEY` for the first login
 
-3. Optionally seed AGH with the provided template so Unbound is preconfigured:
+3. Seed Unbound runtime state before first start:
+
+   ```sh
+   ./scripts/init-unbound.sh
+   ```
+
+   This fetches the current root hints file and generates the DNSSEC trust
+   anchor in `./unbound/var/`, which the bundled Unbound container needs for a
+   clean first boot.
+
+4. Optionally seed AGH with the provided template so Unbound is preconfigured:
 
    ```sh
    mkdir -p conf work tailscale-state unbound/var
@@ -82,31 +93,77 @@ Live runtime directories such as `conf/`, `work/`, `tailscale-state/`, and
    If you skip this step, AdGuard Home will create its own initial config and
    you can set the upstream later through the UI.
 
-4. Start the stack:
+5. Start the stack:
 
    ```sh
    docker compose up -d
    ```
 
-5. Open the AdGuard Home UI on the LAN IP you assigned:
+6. Open the AdGuard Home UI on the LAN IP you assigned:
 
    ```text
    http://<AGH_IPV4>/
    ```
 
-6. Complete the AdGuard Home first-run setup, or if you used the template,
+7. Complete the AdGuard Home first-run setup, or if you used the template,
    immediately set admin credentials in the AGH UI before broader use.
 
-7. Configure Tailscale Serve from inside the sidecar:
+8. Configure Tailscale Serve from inside the sidecar:
 
    ```sh
    docker exec adguardhome-tailscale tailscale serve --bg --https=443 http://127.0.0.1:80
    ```
 
-8. Open the UI through the Tailscale MagicDNS name shown by `tailscale status`.
+9. Open the UI through the Tailscale MagicDNS name shown by `tailscale status`.
 
-9. If you want tailnet clients to use this instance for DNS, add the node's
+10. If you want tailnet clients to use this instance for DNS, add the node's
    Tailscale IP addresses under Tailscale DNS settings as global nameservers.
+
+## Install With AI
+
+If you want Codex or Claude Code to perform the full install for you, give the
+agent a prompt that is explicit about the constraints and verification steps.
+
+Example prompt:
+
+```text
+Set up this repository as a private DNS stack on a Raspberry Pi running modern
+Raspberry Pi OS 64-bit.
+
+Install and run it in /opt/adguard-stack.
+
+Requirements:
+- Do not reinstall Docker if it is already installed.
+- Do not modify or reinstall host Tailscale.
+- Do not modify host Unbound, Pi-hole, router, DHCP, or other host services.
+- Do not use host networking.
+- Do not publish or change host ports, especially port 53.
+- Keep all new services inside Docker using this repository's compose design.
+- Clone https://github.com/ayn/adguard-unbound-tailscale directly into
+  /opt/adguard-stack.
+- Copy .env.example to .env.
+- Detect the primary LAN interface and subnet settings automatically.
+- Ask me for AGH_IPV4, TS_HOSTNAME, and TS_AUTHKEY before editing .env.
+- Run ./scripts/init-unbound.sh before docker compose up -d.
+- Seed conf/AdGuardHome.yaml from conf-template/AdGuardHome.yaml before first
+  start so AdGuard uses the bundled Unbound container.
+- Start the stack with docker compose up -d.
+- If Tailscale Serve is not configured, run:
+  docker exec adguardhome-tailscale tailscale serve --bg --https=443 http://127.0.0.1:80
+
+Verification:
+- docker compose ps
+- dig @<AGH_IPV4> google.com
+- docker exec adguardhome-tailscale tailscale status
+- identify the node's Tailscale IP
+- dig @<TAILSCALE_IP> google.com
+- confirm the AdGuard Home UI is reachable at the correct tailnet HTTPS URL
+
+If any step fails:
+- stop
+- explain the exact error
+- propose a fix before continuing
+```
 
 ## Compose Design
 
@@ -203,6 +260,8 @@ IP for the observed MAC address.
 
 - Confirm the sidecar has `/dev/net/tun`
 - Confirm `TS_AUTHKEY` is valid for the first login
+- Run `./scripts/init-unbound.sh` before first boot so Unbound has `root.hints`
+  and `root.key`
 - Check:
 
   ```sh
