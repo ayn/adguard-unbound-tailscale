@@ -6,6 +6,7 @@ A practical Docker Compose stack for running:
 - Unbound as a private recursive resolver on an internal Docker bridge
 - Tailscale as a sidecar that shares AdGuard Home's network namespace
 - Tailscale Serve for HTTPS access to the AdGuard Home UI
+- DNS service over the tailnet from the same AdGuard Home instance
 
 This layout avoids host port conflicts, so it can coexist with a DNS service
 already running on the host, including Pi-hole.
@@ -14,7 +15,7 @@ already running on the host, including Pi-hole.
 
 - Gives AdGuard Home its own LAN address for DNS on port 53
 - Keeps Unbound private to Docker and unavailable on the host or LAN
-- Exposes DNS through Tailscale using the same AdGuard Home network namespace
+- Exposes the same AdGuard Home DNS service to tailnet clients over Tailscale
 - Exposes the AdGuard Home UI through Tailscale Serve over HTTPS
 - Persists AdGuard Home, Unbound, and Tailscale state locally
 
@@ -22,7 +23,7 @@ already running on the host, including Pi-hole.
 
 ```text
 LAN Client -> AdGuard Home -> Unbound -> Root / Authoritative DNS
-Tailscale Client -> AdGuard Home -> Unbound -> Root / Authoritative DNS
+Tailnet Client -> AdGuard Home -> Unbound -> Root / Authoritative DNS
 ```
 
 ```text
@@ -31,14 +32,14 @@ LAN Client ->| AdGuard Home         |-> private Docker bridge -> Unbound
              | macvlan LAN address  |
              +----------+-----------+
                         |
-                        +-> Tailscale sidecar -> HTTPS UI and DNS over Tailscale
+                        +-> Tailscale sidecar -> DNS and HTTPS UI over Tailscale
 ```
 
 ## Features
 
 - LAN DNS via macvlan
 - Recursive DNS via Unbound
-- DNS access via Tailscale
+- Tailnet DNS via Tailscale sidecar
 - HTTPS UI via Tailscale Serve
 - No port conflicts with Pi-hole on the host
 
@@ -92,6 +93,9 @@ Live runtime directories such as `conf/`, `work/`, `tailscale-state/`, and
 
 7. Open the UI through the Tailscale MagicDNS name shown by `tailscale status`.
 
+8. If you want tailnet clients to use this instance for DNS, add the node's
+   Tailscale IP addresses under Tailscale DNS settings as global nameservers.
+
 ## Compose Design
 
 - `adguardhome`
@@ -107,7 +111,28 @@ Live runtime directories such as `conf/`, `work/`, `tailscale-state/`, and
 - `tailscale`
   - uses `network_mode: service:adguardhome`
   - shares the AdGuard Home network namespace
-  - can expose DNS and the UI without binding host ports
+  - gives the AGH namespace its own tailnet identity
+  - exposes DNS on port 53 to tailnet clients
+  - exposes the UI through Tailscale Serve without binding host ports
+
+## Using as a Tailscale DNS Server
+
+The Tailscale sidecar is not only for remote UI access.  It also allows the
+same AdGuard Home instance to answer DNS queries from tailnet clients.
+
+To use this stack as a Tailscale DNS server:
+
+- add the node's Tailscale IP addresses under Tailscale DNS global nameservers
+- keep MagicDNS enabled if you want stable device names on the tailnet
+
+MagicDNS and DNS nameserver settings are separate:
+
+- MagicDNS provides names for Tailscale nodes
+- global nameservers tell Tailscale clients which DNS servers to use
+
+If you configure multiple DNS servers in Tailscale, clients may use different
+resolvers for different queries.  If you want consistent filtering behavior,
+align blocklists, rewrites, and policy across those resolvers.
 
 ## Stable IP Assignment
 
