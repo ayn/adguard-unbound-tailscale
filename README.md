@@ -310,7 +310,8 @@ AdGuard Home instance to one or more others using the AdGuard Home HTTP API:
   - syncs a single client policy by exact client name or exact entry in
     `ids[]`
 - `./scripts/sync-policy.sh`
-  - syncs global custom filtering rules and global SafeSearch settings
+  - syncs global blocklist filters, global custom filtering rules, and global
+    SafeSearch settings
 
 Both scripts use `curl -n`, which means credentials are read from `~/.netrc`.
 They do not accept inline passwords and they do not require `PASS=...`
@@ -368,7 +369,7 @@ object.
 
 ### Sync Global Policy
 
-Sync global custom filtering rules and SafeSearch settings:
+Sync global blocklist filters, custom filtering rules, and SafeSearch settings:
 
 ```sh
 ./scripts/sync-policy.sh \
@@ -408,6 +409,11 @@ DST=https://agh-dest.example \
 
 Both scripts continue across multiple destinations and exit nonzero if any
 destination sync fails.
+
+`sync-policy.sh` treats the source instance as authoritative for blocklist
+filters: it adds missing source filters, updates matching destination filters by
+URL, and removes destination-only blocklist filters.  It does not sync allowlist
+filters.
 
 ## Never Commit
 

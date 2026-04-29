@@ -35,6 +35,7 @@ destination instances using the HTTP API and netrc credentials.
 
 This script syncs:
   - global custom filtering rules from /control/filtering/status
+  - global blocklist filters from /control/filtering/status
   - global SafeSearch settings from /control/safesearch/status
 
 Defaults:
@@ -60,6 +61,8 @@ Examples:
 Notes:
   - Uses curl -n, so credentials are read from ~/.netrc.
   - Does not print secrets.
+  - Treats source blocklist filters as authoritative: missing filters are added,
+    matching filters are updated, and destination-only filters are removed.
   - Skips writes when a destination is already in sync.
   - Continues across destinations and exits nonzero if any destination fails.
 EOF
@@ -157,7 +160,7 @@ need_cmd jq
 
 SRC="$(trim_url "$SRC")"
 for i in "${!DEST_URLS[@]}"; do
-  DEST_URLS[$i]="$(trim_url "${DEST_URLS[$i]}")"
+  DEST_URLS[i]="$(trim_url "${DEST_URLS[$i]}")"
 done
 
 src_filtering_file="$TMPDIR/src-filtering.json"
@@ -198,10 +201,138 @@ jq '
   ])
 ' "$src_safesearch_file" > "$safesearch_payload_file"
 
+sync_filter_lists() {
+  local dst=$1
+  local dst_filtering_file=$2
+  local response_file=$3
+  local slug add_ops_file update_ops_file remove_ops_file op_file
+  local add_count update_count remove_count changed_count
+
+  slug="$(slugify "$dst")"
+  add_ops_file="$TMPDIR/filter-add-ops-$slug.json"
+  update_ops_file="$TMPDIR/filter-update-ops-$slug.json"
+  remove_ops_file="$TMPDIR/filter-remove-ops-$slug.json"
+  op_file="$TMPDIR/filter-op-$slug.json"
+
+  jq -n \
+    --slurpfile src "$src_filtering_file" \
+    --slurpfile dst "$dst_filtering_file" '
+      def filters($obj):
+        ($obj.filters // [])
+        | map(select((.url // "") != ""))
+        | map({
+            name: (.name // .url),
+            url,
+            enabled: (.enabled // true)
+          });
+
+      (filters($src[0])) as $src_filters
+      | (filters($dst[0]) | map(.url)) as $dst_urls
+      | $src_filters
+      | map(select(.url as $url | $dst_urls | index($url) | not))
+      | map({
+          name,
+          url,
+          enabled,
+          whitelist: false
+        })
+    ' > "$add_ops_file"
+
+  jq -n \
+    --slurpfile src "$src_filtering_file" \
+    --slurpfile dst "$dst_filtering_file" '
+      def filters($obj):
+        ($obj.filters // [])
+        | map(select((.url // "") != ""))
+        | map({
+            name: (.name // .url),
+            url,
+            enabled: (.enabled // true)
+          });
+
+      (filters($src[0])) as $src_filters
+      | (filters($dst[0])) as $dst_filters
+      | $src_filters
+      | map(
+          . as $src_filter
+          | ($dst_filters[]? | select(.url == $src_filter.url)) as $dst_filter
+          | select(
+              $dst_filter.name != $src_filter.name
+              or $dst_filter.enabled != $src_filter.enabled
+            )
+          | {
+              url: $src_filter.url,
+              whitelist: false,
+              data: $src_filter
+            }
+        )
+    ' > "$update_ops_file"
+
+  jq -n \
+    --slurpfile src "$src_filtering_file" \
+    --slurpfile dst "$dst_filtering_file" '
+      def filters($obj):
+        ($obj.filters // [])
+        | map(select((.url // "") != ""))
+        | map({
+            name: (.name // .url),
+            url,
+            enabled: (.enabled // true)
+          });
+
+      (filters($src[0]) | map(.url)) as $src_urls
+      | filters($dst[0])
+      | map(select(.url as $url | $src_urls | index($url) | not))
+      | map({
+          url,
+          whitelist: false
+        })
+    ' > "$remove_ops_file"
+
+  add_count="$(jq 'length' "$add_ops_file")" || return 1
+  update_count="$(jq 'length' "$update_ops_file")" || return 1
+  remove_count="$(jq 'length' "$remove_ops_file")" || return 1
+  changed_count=$((add_count + update_count + remove_count))
+
+  if [[ "$changed_count" -eq 0 ]]; then
+    printf 'in sync'
+    return 0
+  fi
+
+  while IFS= read -r op; do
+    printf '%s\n' "$op" | jq '{name, url, whitelist}' > "$op_file"
+    if ! request_json POST "$dst/control/filtering/add_url" "$response_file" "$op_file"; then
+      return 1
+    fi
+    if jq -e '.enabled == false' >/dev/null <<< "$op"; then
+      printf '%s\n' "$op" | jq '{url, whitelist, data: {name, url, enabled}}' > "$op_file"
+      if ! request_json POST "$dst/control/filtering/set_url" "$response_file" "$op_file"; then
+        return 1
+      fi
+    fi
+  done < <(jq -c '.[]' "$add_ops_file")
+
+  while IFS= read -r op; do
+    printf '%s\n' "$op" > "$op_file"
+    if ! request_json POST "$dst/control/filtering/set_url" "$response_file" "$op_file"; then
+      return 1
+    fi
+  done < <(jq -c '.[]' "$update_ops_file")
+
+  while IFS= read -r op; do
+    printf '%s\n' "$op" > "$op_file"
+    if ! request_json POST "$dst/control/filtering/remove_url" "$response_file" "$op_file"; then
+      return 1
+    fi
+  done < <(jq -c '.[]' "$remove_ops_file")
+
+  printf 'updated (%s added, %s changed, %s pruned)' "$add_count" "$update_count" "$remove_count"
+}
+
 sync_one_destination() {
   local dst=$1
   local slug dst_filtering_file dst_safesearch_file response_file
-  local rules_status safesearch_status
+  local filters_status rules_status safesearch_status
 
   slug="$(slugify "$dst")"
   dst_filtering_file="$TMPDIR/dst-filtering-$slug.json"
@@ -214,6 +345,8 @@ sync_one_destination() {
   if ! request_json GET "$dst/control/safesearch/status" "$dst_safesearch_file"; then
     return 1
   fi
+
+  filters_status="$(sync_filter_lists "$dst" "$dst_filtering_file" "$response_file")" || return 1
 
   rules_status='in sync'
   if jq -e -n \
@@ -253,7 +386,7 @@ sync_one_destination() {
     safesearch_status='updated'
   fi
 
-  printf 'Destination %s: filtering rules %s, SafeSearch %s.\n' "$dst" "$rules_status" "$safesearch_status"
+  printf 'Destination %s: blocklists %s, filtering rules %s, SafeSearch %s.\n' "$dst" "$filters_status" "$rules_status" "$safesearch_status"
 }
 
 success_count=0

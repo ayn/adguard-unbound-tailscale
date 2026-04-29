@@ -166,7 +166,7 @@ need_cmd jq
 
 SRC="$(trim_url "$SRC")"
 for i in "${!DEST_URLS[@]}"; do
-  DEST_URLS[$i]="$(trim_url "${DEST_URLS[$i]}")"
+  DEST_URLS[i]="$(trim_url "${DEST_URLS[$i]}")"
 done
 
 src_clients_file="$TMPDIR/src-clients.json"
