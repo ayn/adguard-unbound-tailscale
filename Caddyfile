@@ -1,0 +1,7 @@
+{$DOMAIN} {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+
+	reverse_proxy http://adguardhome:80
+}

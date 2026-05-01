@@ -4,43 +4,47 @@ A practical Docker Compose stack for running:
 
 - AdGuard Home on its own LAN IP with Docker macvlan
 - Unbound as a private recursive resolver on an internal Docker bridge
-- Tailscale as a sidecar that shares AdGuard Home's network namespace
-- Tailscale Serve for HTTPS access to the AdGuard Home UI
-- DNS service over the tailnet from the same AdGuard Home instance
+- Caddy as a tailnet-only TLS terminator with a real Let's Encrypt certificate
+- Tailscale as a sidecar that shares Caddy's network namespace
 
 This layout avoids host port conflicts, so it can coexist with a DNS service
 already running on the host, including Pi-hole.
+
+This stack is intended to run on rootful Docker.  It depends on macvlan
+networking, low-numbered DNS ports, `/dev/net/tun`, `NET_ADMIN`, and Docker
+network namespace sharing, which are a poor fit for rootless Docker.  If your
+host requires privileged Docker access, run the Compose and Docker commands
+below with `sudo`.
 
 ## What This Stack Does
 
 - Gives AdGuard Home its own LAN address for DNS on port 53
 - Keeps Unbound private to Docker and unavailable on the host or LAN
-- Exposes the same AdGuard Home DNS service to tailnet clients over Tailscale
-- Exposes the AdGuard Home UI through Tailscale Serve over HTTPS
-- Persists AdGuard Home, Unbound, and Tailscale state locally
+- Exposes the AdGuard Home UI to tailnet clients through Caddy over HTTPS
+- Uses Cloudflare DNS-01 validation, so no public A/AAAA record is required
+- Persists AdGuard Home, Unbound, Caddy, and Tailscale state locally
 
 ## Architecture
 
 ```text
 LAN Client -> AdGuard Home -> Unbound -> Root / Authoritative DNS
-Tailnet Client -> AdGuard Home -> Unbound -> Root / Authoritative DNS
+Tailnet Client -> https://${DOMAIN}/ -> Tailscale sidecar -> Caddy -> AdGuard Home UI
 ```
 
 ```text
-             +----------------------+
-LAN Client ->| AdGuard Home         |-> private Docker bridge -> Unbound
-             | macvlan LAN address  |
-             +----------+-----------+
-                        |
-                        +-> Tailscale sidecar -> DNS and HTTPS UI over Tailscale
+LAN Client -> AdGuard Home macvlan LAN IP -> private Docker bridge -> Unbound
+
+Tailnet Client -> Tailscale sidecar
+                  shares Caddy network namespace
+                  Caddy :443/:80 -> private Docker bridge -> AdGuard Home :80
 ```
 
 ## Features
 
 - LAN DNS via macvlan
 - Recursive DNS via Unbound
-- Tailnet DNS via Tailscale sidecar
-- HTTPS UI via Tailscale Serve
+- Tailnet-only HTTPS UI via Caddy and Tailscale
+- Let's Encrypt certificates via Cloudflare DNS-01
 - No port conflicts with Pi-hole on the host
 
 ## Repository Layout
@@ -48,6 +52,8 @@ LAN Client ->| AdGuard Home         |-> private Docker bridge -> Unbound
 ```text
 AGENTS.md
 docker-compose.yml
+Dockerfile.caddy
+Caddyfile
 .env.example
 README.md
 conf-template/
@@ -72,6 +78,11 @@ Live runtime directories such as `conf/`, `work/`, `tailscale-state/`, and
    - set `LAN_PARENT_IFACE`, `LAN_SUBNET`, and `LAN_GATEWAY`
    - set `TS_HOSTNAME`
    - set `TS_AUTHKEY` for the first login
+   - set `DOMAIN` to this Pi's hostname, for example
+     `adguardhome-primary.example.com` or
+     `adguardhome-secondary.example.com`
+   - set `CF_API_TOKEN` to a Cloudflare token scoped to DNS edits for
+     the parent DNS zone
 
 3. Seed Unbound runtime state before first start:
 
@@ -96,7 +107,7 @@ Live runtime directories such as `conf/`, `work/`, `tailscale-state/`, and
 5. Start the stack:
 
    ```sh
-   docker compose up -d
+   sudo docker compose up -d
    ```
 
 6. Open the AdGuard Home UI on the LAN IP you assigned:
@@ -108,16 +119,86 @@ Live runtime directories such as `conf/`, `work/`, `tailscale-state/`, and
 7. Complete the AdGuard Home first-run setup, or if you used the template,
    immediately set admin credentials in the AGH UI before broader use.
 
-8. Configure Tailscale Serve from inside the sidecar:
+8. If this stack previously used Tailscale Serve, reset the persisted Serve
+   config once:
 
    ```sh
-   docker exec adguardhome-tailscale tailscale serve --bg --https=443 http://127.0.0.1:80
+   sudo docker exec adguardhome-tailscale tailscale serve reset
    ```
 
-9. Open the UI through the Tailscale MagicDNS name shown by `tailscale status`.
+9. Open the UI through the custom tailnet-only hostname:
 
-10. If you want tailnet clients to use this instance for DNS, add the node's
-   Tailscale IP addresses under Tailscale DNS settings as global nameservers.
+   ```text
+   https://${DOMAIN}/
+   ```
+
+10. If you change only `.env`, run `sudo docker compose up -d` to recreate
+   affected containers with the new environment.  `sudo docker compose restart`
+   reuses the existing container environment.
+
+## Custom Domain via Caddy + Cloudflare DNS-01
+
+This stack serves the AdGuard Home web UI at `https://${DOMAIN}/` for tailnet
+clients only.  Caddy obtains a real Let's Encrypt certificate with Cloudflare
+DNS-01 validation, so the hostname does not need a public A or AAAA record.
+
+Create a Cloudflare API token with DNS edit permission scoped to the
+parent DNS zone, then set it in `.env` as `CF_API_TOKEN`.  The token belongs
+only in `.env`; do not commit it or paste it into logs.
+
+Set `DOMAIN` per deployment:
+
+- Primary node: `adguardhome-primary.example.com`
+- Secondary node: `adguardhome-secondary.example.com`
+
+The AdGuard split-horizon rewrites for those hostnames are expected to already
+exist: one A record and one AAAA record for the hostname pointing to that Pi's
+tailnet IPv4 and IPv6.  Do not create public Cloudflare A/AAAA records for
+these names.
+
+Start or update the stack with a build so the custom Caddy binary includes the
+Cloudflare DNS plugin:
+
+```sh
+sudo env DOMAIN=adguardhome-primary.example.com docker compose up -d --build
+```
+
+You can also set `DOMAIN` in `.env` and run:
+
+```sh
+sudo docker compose up -d --build
+```
+
+If this node previously used Tailscale Serve, clear the persisted Serve config
+once after the sidecar is running:
+
+```sh
+sudo docker exec adguardhome-tailscale tailscale serve reset
+```
+
+Tailscale Serve must stay disabled for this stack.  It terminates TLS with a
+`*.ts.net` certificate and intercepts SNI before Caddy can present the custom
+domain certificate.
+
+Verify from a tailnet client:
+
+```sh
+curl -I https://${DOMAIN}/
+```
+
+On first issuance, Caddy logs should include certificate issuance messages:
+
+```sh
+sudo docker compose logs caddy | grep -i certificate
+```
+
+On hosts where Docker is root-owned, prefix the Docker commands in this section
+with `sudo`, for example:
+
+```sh
+sudo docker compose up -d --build
+sudo docker exec adguardhome-tailscale tailscale serve reset
+```
 
 ## Install With AI
 
@@ -134,6 +215,9 @@ Install and run it in /opt/adguard-stack.
 
 Requirements:
 - Do not reinstall Docker if it is already installed.
+- Use rootful Docker.  Do not migrate this stack to rootless Docker.
+- If Docker is root-owned on the host, use `sudo docker ...` for Docker and
+  Compose commands.
 - Do not modify or reinstall host Tailscale.
 - Do not modify host Unbound, Pi-hole, router, DHCP, or other host services.
 - Do not use host networking.
@@ -143,21 +227,21 @@ Requirements:
   /opt/adguard-stack.
 - Copy .env.example to .env.
 - Detect the primary LAN interface and subnet settings automatically.
-- Ask me for AGH_IPV4, TS_HOSTNAME, and TS_AUTHKEY before editing .env.
-- Run ./scripts/init-unbound.sh before docker compose up -d.
+- Ask me for AGH_IPV4, TS_HOSTNAME, TS_AUTHKEY, DOMAIN, and CF_API_TOKEN
+  before editing .env.
+- Run ./scripts/init-unbound.sh before sudo docker compose up -d.
 - Seed conf/AdGuardHome.yaml from conf-template/AdGuardHome.yaml before first
   start so AdGuard uses the bundled Unbound container.
-- Start the stack with docker compose up -d.
-- If Tailscale Serve is not configured, run:
-  docker exec adguardhome-tailscale tailscale serve --bg --https=443 http://127.0.0.1:80
+- Start the stack with sudo docker compose up -d --build.
+- If Tailscale Serve was configured previously, run:
+  sudo docker exec adguardhome-tailscale tailscale serve reset
 
 Verification:
-- docker compose ps
+- sudo docker compose ps
 - dig @<AGH_IPV4> google.com
-- docker exec adguardhome-tailscale tailscale status
-- identify the node's Tailscale IP
-- dig @<TAILSCALE_IP> google.com
-- confirm the AdGuard Home UI is reachable at the correct tailnet HTTPS URL
+- sudo docker exec adguardhome-tailscale tailscale status
+- curl -I https://${DOMAIN}/ from a tailnet client
+- sudo docker compose logs caddy | grep -i certificate
 
 If any step fails:
 - stop
@@ -167,41 +251,33 @@ If any step fails:
 
 ## Compose Design
 
+This Compose file expects rootful Docker.  The AdGuard macvlan LAN attachment,
+Tailscale TUN device, `NET_ADMIN`, and namespace-sharing sidecar pattern are
+intentional parts of the design.
+
 - `adguardhome`
   - joins the macvlan LAN network
   - joins the private Docker bridge used for Unbound
   - publishes no host ports
+  - serves its web UI on the internal bridge for Caddy
 
 - `unbound`
   - joins only the private Docker bridge
   - publishes no host ports
   - is reachable only from Docker-attached peers
 
+- `caddy`
+  - joins the private Docker bridge
+  - reverse-proxies the AdGuard Home web UI
+  - obtains Let's Encrypt certificates through Cloudflare DNS-01
+  - publishes no host ports
+
 - `tailscale`
-  - uses `network_mode: service:adguardhome`
-  - shares the AdGuard Home network namespace
-  - gives the AGH namespace its own tailnet identity
-  - exposes DNS on port 53 to tailnet clients
-  - exposes the UI through Tailscale Serve without binding host ports
-
-## Using as a Tailscale DNS Server
-
-The Tailscale sidecar is not only for remote UI access.  It also allows the
-same AdGuard Home instance to answer DNS queries from tailnet clients.
-
-To use this stack as a Tailscale DNS server:
-
-- add the node's Tailscale IP addresses under Tailscale DNS global nameservers
-- keep MagicDNS enabled if you want stable device names on the tailnet
-
-MagicDNS and DNS nameserver settings are separate:
-
-- MagicDNS provides names for Tailscale nodes
-- global nameservers tell Tailscale clients which DNS servers to use
-
-If you configure multiple DNS servers in Tailscale, clients may use different
-resolvers for different queries.  If you want consistent filtering behavior,
-align blocklists, rewrites, and policy across those resolvers.
+  - uses `network_mode: service:caddy`
+  - shares Caddy's network namespace
+  - gives Caddy a tailnet identity
+  - exposes Caddy's HTTPS listener to tailnet clients
+  - does not use Tailscale Serve
 
 ## Stable IP Assignment
 
@@ -240,6 +316,7 @@ IP for the observed MAC address.
 - Keep `.env`, service state, and local config out of Git
 - Remove `TS_AUTHKEY` from `.env` after the first successful Tailscale login if
   state is persisted
+- Keep `CF_API_TOKEN` in `.env` only
 
 ## Troubleshooting
 
@@ -262,31 +339,40 @@ IP for the observed MAC address.
 - Confirm `TS_AUTHKEY` is valid for the first login
 - Run `./scripts/init-unbound.sh` before first boot so Unbound has `root.hints`
   and `root.key`
-- If you explicitly restart `adguardhome`, restart the sidecar too so it
+- If you explicitly restart `caddy`, restart the sidecar too so it
   rejoins the current shared network namespace:
 
   ```sh
-  docker compose restart adguardhome tailscale
+  sudo docker compose restart caddy tailscale
   ```
 
-  If `adguardhome` was already restarted by itself, recover with:
+  If `caddy` was already restarted by itself, recover with:
 
   ```sh
-  docker restart adguardhome-tailscale
+  sudo docker restart adguardhome-tailscale
   ```
 - Check:
 
   ```sh
-  docker exec adguardhome-tailscale tailscale status
-  docker exec adguardhome-tailscale tailscale serve status
+  sudo docker exec adguardhome-tailscale tailscale status
+  sudo docker exec adguardhome-tailscale tailscale serve status
+  ```
+
+  `tailscale serve status` should not show an active Serve config for this
+  stack.  Reset it with:
+
+  ```sh
+  sudo docker exec adguardhome-tailscale tailscale serve reset
   ```
 
 ## Operational Commands
 
+Use `sudo docker ...` on hosts where Docker is root-owned.
+
 Start:
 
 ```sh
-docker compose up -d
+sudo docker compose up -d
 ```
 
 Status:
@@ -298,7 +384,7 @@ Status:
 Stop:
 
 ```sh
-docker compose down
+sudo docker compose down
 ```
 
 ## Syncing Policy Between AdGuard Home Instances
