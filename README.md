@@ -172,6 +172,15 @@ You can also set `DOMAIN` in `.env` and run:
 sudo docker compose up -d --build
 ```
 
+If Docker build containers cannot resolve external module hosts because this
+DNS stack is being rebuilt, build Caddy with host networking and then recreate
+the stack without rebuilding:
+
+```sh
+sudo docker build --network host -t adguard-stack-caddy -f Dockerfile.caddy .
+sudo docker compose up -d --no-build
+```
+
 If this node previously used Tailscale Serve, clear the persisted Serve config
 once after the sidecar is running:
 
@@ -394,6 +403,15 @@ Stop:
 
 ```sh
 sudo docker compose down
+```
+
+Update After Pull:
+
+```sh
+git pull
+sudo docker build --network host -t adguard-stack-caddy -f Dockerfile.caddy .
+sudo docker compose up -d --no-build
+sudo docker exec adguardhome-tailscale tailscale serve reset
 ```
 
 ## Syncing Policy Between AdGuard Home Instances
