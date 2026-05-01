@@ -232,9 +232,13 @@ Requirements:
   Compose commands.
 - Do not modify or reinstall host Tailscale.
 - Do not modify host Unbound, Pi-hole, router, DHCP, or other host services.
-- Do not use host networking.
+- Do not use host networking for runtime containers.
 - Do not publish or change host ports, especially port 53.
 - Keep all new services inside Docker using this repository's compose design.
+- Do not configure Tailscale Serve or TS_SERVE_CONFIG; Caddy owns custom-domain
+  HTTPS and Tailscale only provides tailnet reachability.
+- Keep AdGuard Home's built-in HTTPS listener disabled so Caddy can bind port
+  443 in the shared network namespace.
 - Clone https://github.com/ayn/adguard-unbound-tailscale directly into
   /opt/adguard-stack.
 - Copy .env.example to .env.
@@ -245,6 +249,10 @@ Requirements:
 - Seed conf/AdGuardHome.yaml from conf-template/AdGuardHome.yaml before first
   start so AdGuard uses the bundled Unbound container.
 - Start the stack with sudo docker compose up -d --build.
+- If the Caddy image build cannot resolve DNS because this DNS stack is being
+  rebuilt, build Caddy with host networking and then recreate without building:
+  sudo docker build --network host -t adguard-stack-caddy -f Dockerfile.caddy .
+  sudo docker compose up -d --no-build
 - If Tailscale Serve was configured previously, run:
   sudo docker exec adguardhome-tailscale tailscale serve reset
 
