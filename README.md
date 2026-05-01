@@ -5,7 +5,7 @@ A practical Docker Compose stack for running:
 - AdGuard Home on its own LAN IP with Docker macvlan
 - Unbound as a private recursive resolver on an internal Docker bridge
 - Caddy as a tailnet-only TLS terminator with a real Let's Encrypt certificate
-- Tailscale as a sidecar that shares Caddy's network namespace
+- Tailscale as a sidecar that shares AdGuard Home's network namespace
 
 This layout avoids host port conflicts, so it can coexist with a DNS service
 already running on the host, including Pi-hole.
@@ -20,6 +20,7 @@ below with `sudo`.
 
 - Gives AdGuard Home its own LAN address for DNS on port 53
 - Keeps Unbound private to Docker and unavailable on the host or LAN
+- Exposes the same AdGuard Home DNS service to tailnet clients over Tailscale
 - Exposes the AdGuard Home UI to tailnet clients through Caddy over HTTPS
 - Uses Cloudflare DNS-01 validation, so no public A/AAAA record is required
 - Persists AdGuard Home, Unbound, Caddy, and Tailscale state locally
@@ -35,14 +36,16 @@ Tailnet Client -> https://${DOMAIN}/ -> Tailscale sidecar -> Caddy -> AdGuard Ho
 LAN Client -> AdGuard Home macvlan LAN IP -> private Docker bridge -> Unbound
 
 Tailnet Client -> Tailscale sidecar
-                  shares Caddy network namespace
-                  Caddy :443/:80 -> private Docker bridge -> AdGuard Home :80
+                  shares AdGuard Home network namespace
+                  :53 -> AdGuard Home DNS
+                  :443 -> Caddy -> 127.0.0.1:80 -> AdGuard Home UI
 ```
 
 ## Features
 
 - LAN DNS via macvlan
 - Recursive DNS via Unbound
+- Tailnet DNS via Tailscale sidecar
 - Tailnet-only HTTPS UI via Caddy and Tailscale
 - Let's Encrypt certificates via Cloudflare DNS-01
 - No port conflicts with Pi-hole on the host
@@ -259,7 +262,8 @@ intentional parts of the design.
   - joins the macvlan LAN network
   - joins the private Docker bridge used for Unbound
   - publishes no host ports
-  - serves its web UI on the internal bridge for Caddy
+  - serves DNS on port 53 and its plain web UI on port 80 in the shared
+    network namespace
 
 - `unbound`
   - joins only the private Docker bridge
@@ -267,16 +271,20 @@ intentional parts of the design.
   - is reachable only from Docker-attached peers
 
 - `caddy`
-  - joins the private Docker bridge
-  - reverse-proxies the AdGuard Home web UI
+  - uses `network_mode: service:adguardhome`
+  - shares AdGuard Home's network namespace
+  - reverse-proxies the AdGuard Home web UI at `127.0.0.1:80`
   - obtains Let's Encrypt certificates through Cloudflare DNS-01
+  - listens on HTTPS port 443 only; automatic HTTP redirects are disabled so
+    AdGuard Home can keep port 80
   - publishes no host ports
 
 - `tailscale`
-  - uses `network_mode: service:caddy`
-  - shares Caddy's network namespace
-  - gives Caddy a tailnet identity
-  - exposes Caddy's HTTPS listener to tailnet clients
+  - uses `network_mode: service:adguardhome`
+  - shares AdGuard Home's network namespace
+  - gives the shared namespace a tailnet identity
+  - exposes AdGuard Home DNS on port 53 to tailnet clients
+  - exposes Caddy's HTTPS listener on port 443 to tailnet clients
   - does not use Tailscale Serve
 
 ## Stable IP Assignment
@@ -339,16 +347,17 @@ IP for the observed MAC address.
 - Confirm `TS_AUTHKEY` is valid for the first login
 - Run `./scripts/init-unbound.sh` before first boot so Unbound has `root.hints`
   and `root.key`
-- If you explicitly restart `caddy`, restart the sidecar too so it
-  rejoins the current shared network namespace:
+- If you explicitly restart `adguardhome`, restart Caddy and the sidecar too so
+  they rejoin the current shared network namespace:
 
   ```sh
-  sudo docker compose restart caddy tailscale
+  sudo docker compose restart adguardhome caddy tailscale
   ```
 
-  If `caddy` was already restarted by itself, recover with:
+  If `adguardhome` was already restarted by itself, recover with:
 
   ```sh
+  sudo docker restart adguardhome-caddy
   sudo docker restart adguardhome-tailscale
   ```
 - Check:

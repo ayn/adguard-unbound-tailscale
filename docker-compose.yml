@@ -31,8 +31,10 @@ services:
     depends_on:
       adguardhome:
         condition: service_started
-    networks:
-      - adguard_internal
+    # Share AdGuard Home's namespace so the Tailscale sidecar can expose both
+    # AdGuard DNS on :53 and Caddy HTTPS on :443 from one tailnet IP.
+    # This requires AdGuard Home's own TLS listener to remain disabled.
+    network_mode: service:adguardhome
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -46,11 +48,10 @@ services:
     container_name: ${TAILSCALE_CONTAINER_NAME}
     restart: unless-stopped
 
-    # Share Caddy's network namespace so this Tailscale node exposes Caddy's
-    # :443 (HTTPS via Let's Encrypt + Cloudflare DNS-01) and :80 (auto HTTPS
-    # redirect) directly on the tailnet. AdGuard Home's web UI is no longer
-    # tailnet-reachable directly; Caddy is the only front door.
-    network_mode: service:caddy
+    # Share AdGuard Home's network namespace so this Tailscale node exposes
+    # AdGuard DNS on :53 and Caddy HTTPS on :443 directly on the tailnet.
+    # Do not enable AdGuard Home's own TLS listener on :443; Caddy owns HTTPS.
+    network_mode: service:adguardhome
     depends_on:
       caddy:
         # When caddy is explicitly restarted via docker compose, restart this

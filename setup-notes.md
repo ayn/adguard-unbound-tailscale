@@ -84,6 +84,10 @@ Do not configure `TS_SERVE_CONFIG` or run `tailscale serve` for this stack.
 Tailscale Serve terminates TLS with a `*.ts.net` certificate before Caddy can
 present the custom domain certificate.
 
+Caddy and Tailscale share AdGuard Home's network namespace.  AdGuard Home owns
+DNS on port 53 and plain HTTP on port 80; Caddy owns HTTPS on port 443.  Keep
+AdGuard Home's own TLS listener disabled so it does not conflict with Caddy.
+
 Check the status and Caddy issuance logs:
 
 ```sh
