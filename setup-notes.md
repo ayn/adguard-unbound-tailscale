@@ -2,6 +2,12 @@
 
 These notes cover the first-run steps that happen after `docker compose up -d`.
 
+This stack is intended to run on rootful Docker.  If Docker is root-owned on
+the host, use `sudo docker ...` for the Docker and Compose commands below.
+Rootless Docker is not recommended for this stack because it relies on macvlan,
+`/dev/net/tun`, `NET_ADMIN`, low-numbered DNS ports, and Docker network
+namespace sharing.
+
 ## 1. Open the AdGuard Home UI
 
 Use the LAN IP assigned in `.env`:
@@ -10,8 +16,12 @@ Use the LAN IP assigned in `.env`:
 http://<AGH_IPV4>/
 ```
 
-If Tailscale Serve is already configured, you can also use the node's MagicDNS
-name over HTTPS.
+After Caddy is running and the split-horizon rewrite resolves on the tailnet,
+use the custom hostname over HTTPS:
+
+```text
+https://${DOMAIN}/
+```
 
 ## 2. Decide whether to use the optional seed template
 
@@ -55,44 +65,39 @@ Use:
 
 Do not point AdGuard Home at the host's resolver or a host macvlan shim.
 
-## 5. Configure Tailscale Serve
+## 5. Configure Caddy for Tailnet HTTPS
 
-Once the Tailscale sidecar is logged in, expose the AdGuard Home UI over HTTPS:
+Set `DOMAIN` and `CF_API_TOKEN` in `.env`, then build and start the stack:
 
 ```sh
-docker exec adguardhome-tailscale tailscale serve --bg --https=443 http://127.0.0.1:80
+docker compose up -d --build
 ```
 
-Check the status:
+If this node previously used Tailscale Serve, reset the persisted Serve config
+once after the sidecar is logged in:
 
 ```sh
-docker exec adguardhome-tailscale tailscale serve status
+docker exec adguardhome-tailscale tailscale serve reset
+```
+
+Do not configure `TS_SERVE_CONFIG` or run `tailscale serve` for this stack.
+Tailscale Serve terminates TLS with a `*.ts.net` certificate before Caddy can
+present the custom domain certificate.
+
+Check the status and Caddy issuance logs:
+
+```sh
 docker exec adguardhome-tailscale tailscale status
+docker compose logs caddy | grep -i certificate
 ```
 
-## 6. Optionally use this node as a Tailscale DNS server
-
-If you want tailnet clients to use this AdGuard Home instance for DNS:
-
-- find the node's Tailscale IPv4 and IPv6 addresses
-- add them under Tailscale DNS global nameservers
-
-MagicDNS is separate from nameserver configuration:
-
-- MagicDNS gives you stable node names
-- global nameservers tell clients which DNS servers to use
-
-If you use multiple DNS servers in Tailscale, clients may use different
-resolvers for different queries.  Align filtering and policy if you need
-consistent results.
-
-## 7. Reserve the LAN IP if the deployment becomes permanent
+## 6. Reserve the LAN IP if the deployment becomes permanent
 
 This stack is easiest to operate when the AdGuard Home LAN address is stable.
 If your router supports reservations based on the container MAC address, pin it
 there once the deployment is established.
 
-## 8. Keep local state out of Git
+## 7. Keep local state out of Git
 
 Do not commit:
 

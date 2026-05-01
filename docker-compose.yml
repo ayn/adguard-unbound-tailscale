@@ -4,9 +4,9 @@ services:
     container_name: ${AGH_CONTAINER_NAME}
     restart: unless-stopped
 
-    # No host port mappings are used.  AdGuard Home binds to port 53 and 80
-    # only on its macvlan LAN address, so the host Pi-hole remains owner of
-    # host port 53 and host port 80.
+    # No host port mappings are used.  AdGuard Home binds DNS and its plain
+    # web UI on the macvlan LAN address and on the private internal bridge.
+    # Tailnet HTTPS for the web UI terminates at Caddy below.
     volumes:
       - ./work:/opt/adguardhome/work
       - ./conf:/opt/adguardhome/conf
@@ -22,19 +22,39 @@ services:
         # outbound Internet access to query root and authoritative servers.
         ipv4_address: ${INTERNAL_AGH_IPV4}
 
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    container_name: adguardhome-caddy
+    restart: unless-stopped
+    depends_on:
+      adguardhome:
+        condition: service_started
+    networks:
+      - adguard_internal
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - DOMAIN=${DOMAIN}
+      - CF_API_TOKEN=${CF_API_TOKEN}
+
   tailscale:
     image: ${TAILSCALE_IMAGE}
     container_name: ${TAILSCALE_CONTAINER_NAME}
     restart: unless-stopped
 
-    # Share AdGuard Home's network namespace.  This preserves the existing
-    # macvlan LAN IP and lets this Tailscale node expose AGH DNS on port 53 and
-    # proxy the AGH web UI from 127.0.0.1:80 without publishing host ports.
-    network_mode: service:adguardhome
+    # Share Caddy's network namespace so this Tailscale node exposes Caddy's
+    # :443 (HTTPS via Let's Encrypt + Cloudflare DNS-01) and :80 (auto HTTPS
+    # redirect) directly on the tailnet. AdGuard Home's web UI is no longer
+    # tailnet-reachable directly; Caddy is the only front door.
+    network_mode: service:caddy
     depends_on:
-      adguardhome:
-        # When adguardhome is explicitly restarted via docker compose, restart
-        # this sidecar too so it rejoins the current shared network namespace.
+      caddy:
+        # When caddy is explicitly restarted via docker compose, restart this
+        # sidecar too so it rejoins the current shared network namespace.
         condition: service_started
         restart: true
 
@@ -53,6 +73,12 @@ services:
       TS_HOSTNAME: ${TS_HOSTNAME}
       TS_STATE_DIR: /var/lib/tailscale
       TS_USERSPACE: "false"
+      # Do NOT set TS_SERVE_CONFIG. Caddy is the TLS terminator on this
+      # tailnet IP; tailscale serve would intercept :443 first with its
+      # *.ts.net cert and break SNI for ${DOMAIN}. If migrating from a
+      # setup that used `tailscale serve`, clear leftover state once:
+      #   docker exec adguardhome-tailscale tailscale serve reset
+      # State persists in ./tailscale-state, so this is a one-time fix.
 
   unbound:
     image: ${UNBOUND_IMAGE}
@@ -70,6 +96,10 @@ services:
     volumes:
       - ./unbound/custom.conf.d:/etc/unbound/custom.conf.d:ro
       - ./unbound/var:/var/unbound
+
+volumes:
+  caddy-data:
+  caddy-config:
 
 networks:
   adguard_internal:
