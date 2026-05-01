@@ -36,6 +36,7 @@ destination instances using the HTTP API and netrc credentials.
 This script syncs:
   - global custom filtering rules from /control/filtering/status
   - global blocklist filters from /control/filtering/status
+  - DNS rewrites from /control/rewrite/list
   - global SafeSearch settings from /control/safesearch/status
 
 Defaults:
@@ -164,11 +165,13 @@ for i in "${!DEST_URLS[@]}"; do
 done
 
 src_filtering_file="$TMPDIR/src-filtering.json"
+src_rewrites_file="$TMPDIR/src-rewrites.json"
 src_safesearch_file="$TMPDIR/src-safesearch.json"
 rules_payload_file="$TMPDIR/rules-payload.json"
 safesearch_payload_file="$TMPDIR/safesearch-payload.json"
 
 request_json GET "$SRC/control/filtering/status" "$src_filtering_file"
+request_json GET "$SRC/control/rewrite/list" "$src_rewrites_file"
 request_json GET "$SRC/control/safesearch/status" "$src_safesearch_file"
 
 jq '
@@ -329,17 +332,139 @@ sync_filter_lists() {
   printf 'updated (%s added, %s changed, %s pruned)' "$add_count" "$update_count" "$remove_count"
 }
 
+sync_rewrites() {
+  local dst=$1
+  local dst_rewrites_file=$2
+  local response_file=$3
+  local slug add_ops_file update_ops_file remove_ops_file op_file
+  local add_count update_count remove_count changed_count
+
+  slug="$(slugify "$dst")"
+  add_ops_file="$TMPDIR/rewrite-add-ops-$slug.json"
+  update_ops_file="$TMPDIR/rewrite-update-ops-$slug.json"
+  remove_ops_file="$TMPDIR/rewrite-remove-ops-$slug.json"
+  op_file="$TMPDIR/rewrite-op-$slug.json"
+
+  jq -n \
+    --slurpfile src "$src_rewrites_file" \
+    --slurpfile dst "$dst_rewrites_file" '
+      def rewrites($entries):
+        ($entries // [])
+        | map(select((.domain // "") != "" and (.answer // "") != ""))
+        | map({
+            domain,
+            answer,
+            enabled: (if has("enabled") then .enabled else true end)
+          });
+
+      (rewrites($src[0])) as $src_rewrites
+      | (rewrites($dst[0]) | map(.domain + "\u0000" + .answer)) as $dst_keys
+      | $src_rewrites
+      | map(select((.domain + "\u0000" + .answer) as $key | $dst_keys | index($key) | not))
+    ' > "$add_ops_file"
+
+  jq -n \
+    --slurpfile src "$src_rewrites_file" \
+    --slurpfile dst "$dst_rewrites_file" '
+      def rewrites($entries):
+        ($entries // [])
+        | map(select((.domain // "") != "" and (.answer // "") != ""))
+        | map({
+            domain,
+            answer,
+            enabled: (if has("enabled") then .enabled else true end)
+          });
+
+      (rewrites($src[0])) as $src_rewrites
+      | (rewrites($dst[0])) as $dst_rewrites
+      | $src_rewrites
+      | map(
+          . as $src_rewrite
+          | ($dst_rewrites[]? | select(
+              .domain == $src_rewrite.domain
+              and .answer == $src_rewrite.answer
+            )) as $dst_rewrite
+          | select($dst_rewrite.enabled != $src_rewrite.enabled)
+          | {
+              target: {
+                domain: $src_rewrite.domain,
+                answer: $src_rewrite.answer
+              },
+              update: $src_rewrite
+            }
+        )
+    ' > "$update_ops_file"
+
+  jq -n \
+    --slurpfile src "$src_rewrites_file" \
+    --slurpfile dst "$dst_rewrites_file" '
+      def rewrites($entries):
+        ($entries // [])
+        | map(select((.domain // "") != "" and (.answer // "") != ""))
+        | map({
+            domain,
+            answer,
+            enabled: (if has("enabled") then .enabled else true end)
+          });
+
+      (rewrites($src[0]) | map(.domain + "\u0000" + .answer)) as $src_keys
+      | rewrites($dst[0])
+      | map(select((.domain + "\u0000" + .answer) as $key | $src_keys | index($key) | not))
+      | map({
+          domain,
+          answer
+        })
+    ' > "$remove_ops_file"
+
+  add_count="$(jq 'length' "$add_ops_file")" || return 1
+  update_count="$(jq 'length' "$update_ops_file")" || return 1
+  remove_count="$(jq 'length' "$remove_ops_file")" || return 1
+  changed_count=$((add_count + update_count + remove_count))
+
+  if [[ "$changed_count" -eq 0 ]]; then
+    printf 'in sync'
+    return 0
+  fi
+
+  while IFS= read -r op; do
+    printf '%s\n' "$op" > "$op_file"
+    if ! request_json POST "$dst/control/rewrite/add" "$response_file" "$op_file"; then
+      return 1
+    fi
+  done < <(jq -c '.[]' "$add_ops_file")
+
+  while IFS= read -r op; do
+    printf '%s\n' "$op" > "$op_file"
+    if ! request_json PUT "$dst/control/rewrite/update" "$response_file" "$op_file"; then
+      return 1
+    fi
+  done < <(jq -c '.[]' "$update_ops_file")
+
+  while IFS= read -r op; do
+    printf '%s\n' "$op" > "$op_file"
+    if ! request_json POST "$dst/control/rewrite/delete" "$response_file" "$op_file"; then
+      return 1
+    fi
+  done < <(jq -c '.[]' "$remove_ops_file")
+
+  printf 'updated (%s added, %s changed, %s pruned)' "$add_count" "$update_count" "$remove_count"
+}
+
 sync_one_destination() {
   local dst=$1
-  local slug dst_filtering_file dst_safesearch_file response_file
-  local filters_status rules_status safesearch_status
+  local slug dst_filtering_file dst_rewrites_file dst_safesearch_file response_file
+  local filters_status rewrites_status rules_status safesearch_status
 
   slug="$(slugify "$dst")"
   dst_filtering_file="$TMPDIR/dst-filtering-$slug.json"
+  dst_rewrites_file="$TMPDIR/dst-rewrites-$slug.json"
   dst_safesearch_file="$TMPDIR/dst-safesearch-$slug.json"
   response_file="$TMPDIR/response-$slug.json"
 
   if ! request_json GET "$dst/control/filtering/status" "$dst_filtering_file"; then
+    return 1
+  fi
+  if ! request_json GET "$dst/control/rewrite/list" "$dst_rewrites_file"; then
     return 1
   fi
   if ! request_json GET "$dst/control/safesearch/status" "$dst_safesearch_file"; then
@@ -347,6 +472,7 @@ sync_one_destination() {
   fi
 
   filters_status="$(sync_filter_lists "$dst" "$dst_filtering_file" "$response_file")" || return 1
+  rewrites_status="$(sync_rewrites "$dst" "$dst_rewrites_file" "$response_file")" || return 1
 
   rules_status='in sync'
   if jq -e -n \
@@ -386,7 +512,7 @@ sync_one_destination() {
     safesearch_status='updated'
   fi
 
-  printf 'Destination %s: blocklists %s, filtering rules %s, SafeSearch %s.\n' "$dst" "$filters_status" "$rules_status" "$safesearch_status"
+  printf 'Destination %s: blocklists %s, rewrites %s, filtering rules %s, SafeSearch %s.\n' "$dst" "$filters_status" "$rewrites_status" "$rules_status" "$safesearch_status"
 }
 
 success_count=0
