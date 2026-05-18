@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "dependencyDashboard": true,
+  "timezone": "Asia/Taipei",
+  "schedule": ["before 7am on monday"],
+  "labels": ["dependencies", "docker"],
+  "packageRules": [
+    {
+      "description": "Keep DNS stack image updates reviewable together.",
+      "matchDatasources": ["docker"],
+      "groupName": "dns stack container images"
+    },
+    {
+      "description": "Use stable AdGuard Home tags only, not beta or edge.",
+      "matchPackageNames": ["adguard/adguardhome"],
+      "allowedVersions": "/^v\\d+\\.\\d+\\.\\d+$/"
+    },
+    {
+      "description": "Use stable Tailscale tags only, not unstable.",
+      "matchPackageNames": ["tailscale/tailscale"],
+      "allowedVersions": "/^v\\d+\\.\\d+(\\.\\d+)?$/"
+    },
+    {
+      "description": "Use numbered Unbound release tags only.",
+      "matchPackageNames": ["klutchell/unbound"],
+      "allowedVersions": "/^\\d+\\.\\d+\\.\\d+$/"
+    },
+    {
+      "description": "Keep Caddy builder and runtime images on numbered v2 tags.",
+      "matchPackageNames": ["caddy"],
+      "allowedVersions": "/^2\\.\\d+\\.\\d+(-builder)?$/"
+    }
+  ]
+}
