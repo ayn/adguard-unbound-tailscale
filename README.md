@@ -212,6 +212,36 @@ sudo docker compose up -d --build
 sudo docker exec adguardhome-tailscale tailscale serve reset
 ```
 
+## Updates
+
+Container image versions are pinned in `docker-compose.yml` and
+`Dockerfile.caddy` so Renovate can open reviewable PRs when updates are
+available.  Do not switch the stack back to `latest`; this DNS stack should be
+updated deliberately.
+
+Roll updates one DNS node at a time, starting with the secondary node:
+
+```sh
+cd /opt/adguard-stack
+git pull --ff-only
+sudo docker compose pull adguardhome unbound tailscale
+sudo docker compose build --pull caddy
+sudo docker compose up -d --build
+sudo docker compose ps
+```
+
+Verify the updated node before updating the next one:
+
+```sh
+dig @<AGH_IPV4> google.com
+curl -I https://${DOMAIN}/
+sudo docker compose logs --tail=100 adguardhome unbound caddy tailscale
+```
+
+AdGuard Home filter lists are separate from container image updates.  The
+provided AdGuard Home template sets `filters_update_interval: 24`, so enabled
+blocklists refresh automatically every 24 hours.
+
 ## Install With AI
 
 If you want Codex or Claude Code to perform the full install for you, give the

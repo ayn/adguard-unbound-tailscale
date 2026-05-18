@@ -9,7 +9,7 @@ if [ -f ./.env ]; then
   set +a
 fi
 
-UNBOUND_IMAGE="${UNBOUND_IMAGE:-klutchell/unbound:latest}"
+UNBOUND_IMAGE="${UNBOUND_IMAGE:-klutchell/unbound:1.25.0}"
 
 mkdir -p ./unbound/var
 
