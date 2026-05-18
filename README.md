@@ -219,7 +219,7 @@ Container image versions are pinned in `docker-compose.yml` and
 available.  Do not switch the stack back to `latest`; this DNS stack should be
 updated deliberately.
 
-Roll updates one DNS node at a time, starting with the secondary node:
+Roll updates one DNS node at a time, starting with the less-preferred peer:
 
 ```sh
 cd /opt/adguard-stack
@@ -227,6 +227,16 @@ git pull --ff-only
 sudo docker compose pull adguardhome unbound tailscale
 sudo docker compose build --pull caddy
 sudo docker compose up -d --build
+sudo docker compose ps
+```
+
+If the Caddy build cannot resolve Go module hosts because this DNS stack is
+being rebuilt, build Caddy with host networking and then recreate the stack
+without rebuilding:
+
+```sh
+sudo docker build --network host -t adguard-stack-caddy -f Dockerfile.caddy .
+sudo docker compose up -d --no-build
 sudo docker compose ps
 ```
 
