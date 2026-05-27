@@ -10,6 +10,10 @@ A practical Docker Compose stack for running:
 This layout avoids host port conflicts, so it can coexist with a DNS service
 already running on the host, including Pi-hole.
 
+Current homelab deployment: the active node is the Pi 5 at
+`adguardhome-pi5.ayn.taipei`.  The former Pi 4 AdGuard Home / Pi-hole node has
+been decommissioned, so this is currently a single-node DNS deployment.
+
 This stack is intended to run on rootful Docker.  It depends on macvlan
 networking, low-numbered DNS ports, `/dev/net/tun`, `NET_ADMIN`, and Docker
 network namespace sharing, which are a poor fit for rootless Docker.  If your
@@ -219,7 +223,8 @@ Container image versions are pinned in `docker-compose.yml` and
 available.  Do not switch the stack back to `latest`; this DNS stack should be
 updated deliberately.
 
-Roll updates one DNS node at a time, starting with the less-preferred peer:
+The current homelab deployment is single-node on the Pi 5, so treat updates as
+network-critical maintenance:
 
 ```sh
 cd /opt/adguard-stack
@@ -229,6 +234,9 @@ sudo docker compose build --pull caddy
 sudo docker compose up -d --build
 sudo docker compose ps
 ```
+
+If another DNS node is reintroduced later, roll updates one DNS node at a time,
+starting with the less-preferred peer.
 
 If the Caddy build cannot resolve Go module hosts because this DNS stack is
 being rebuilt, build Caddy with host networking and then recreate the stack
@@ -240,7 +248,7 @@ sudo docker compose up -d --no-build
 sudo docker compose ps
 ```
 
-Verify the updated node before updating the next one:
+Verify the updated node:
 
 ```sh
 dig @<AGH_IPV4> google.com
