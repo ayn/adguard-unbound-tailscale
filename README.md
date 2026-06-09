@@ -11,7 +11,7 @@ This layout avoids host port conflicts, so it can coexist with a DNS service
 already running on the host, including Pi-hole.
 
 Current homelab deployment: the active node is the Pi 5 at
-`adguardhome-pi5.ayn.taipei`.  The former Pi 4 AdGuard Home / Pi-hole node has
+`adguardhome.ayn.taipei`.  The former Pi 4 AdGuard Home / Pi-hole node has
 been decommissioned, so this is currently a single-node DNS deployment.
 
 This stack is intended to run on rootful Docker.  It depends on macvlan
@@ -85,9 +85,8 @@ Live runtime directories such as `conf/`, `work/`, `tailscale-state/`, and
    - set `LAN_PARENT_IFACE`, `LAN_SUBNET`, and `LAN_GATEWAY`
    - set `TS_HOSTNAME`
    - set `TS_AUTHKEY` for the first login
-   - set `DOMAIN` to this Pi's hostname, for example
-     `adguardhome-primary.example.com` or
-     `adguardhome-secondary.example.com`
+   - set `DOMAIN` to the canonical AdGuard hostname, for example
+     `adguardhome.ayn.taipei`
    - set `CF_API_TOKEN` to a Cloudflare token scoped to DNS edits for
      the parent DNS zone
 
@@ -153,21 +152,23 @@ Create a Cloudflare API token with DNS edit permission scoped to the
 parent DNS zone, then set it in `.env` as `CF_API_TOKEN`.  The token belongs
 only in `.env`; do not commit it or paste it into logs.
 
-Set `DOMAIN` per deployment:
+Set `DOMAIN` to the canonical AdGuard hostname:
 
-- Primary node: `adguardhome-primary.example.com`
-- Secondary node: `adguardhome-secondary.example.com`
+- `adguardhome.ayn.taipei`
 
-The AdGuard split-horizon rewrites for those hostnames are expected to already
-exist: one A record and one AAAA record for the hostname pointing to that Pi's
-tailnet IPv4 and IPv6.  Do not create public Cloudflare A/AAAA records for
-these names.
+Older node-specific hostnames should be retired once the Pi 5 is the only
+AdGuard Home node.
+
+The AdGuard split-horizon rewrites for this hostname are expected to already
+exist: one A record and one AAAA record pointing to this stack's Tailscale
+sidecar IPv4 and IPv6.  Do not create public Cloudflare A/AAAA records for
+this name.
 
 Start or update the stack with a build so the custom Caddy binary includes the
 Cloudflare DNS plugin:
 
 ```sh
-sudo env DOMAIN=adguardhome-primary.example.com docker compose up -d --build
+sudo env DOMAIN=adguardhome.ayn.taipei docker compose up -d --build
 ```
 
 You can also set `DOMAIN` in `.env` and run:
