@@ -1,6 +1,6 @@
 services:
   adguardhome:
-    image: adguard/adguardhome:v0.107.74
+    image: adguard/adguardhome:v0.107.79
     container_name: ${AGH_CONTAINER_NAME}
     restart: unless-stopped
 
@@ -44,7 +44,7 @@ services:
       - CF_API_TOKEN=${CF_API_TOKEN}
 
   tailscale:
-    image: tailscale/tailscale:v1.96.5
+    image: tailscale/tailscale:v1.102.3
     container_name: ${TAILSCALE_CONTAINER_NAME}
     restart: unless-stopped
 
@@ -82,7 +82,7 @@ services:
       # State persists in ./tailscale-state, so this is a one-time fix.
 
   unbound:
-    image: klutchell/unbound:1.25.0
+    image: klutchell/unbound:1.26.0
     container_name: ${UNBOUND_CONTAINER_NAME}
     restart: unless-stopped
 
